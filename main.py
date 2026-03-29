@@ -1,3 +1,4 @@
+from ai_detector import is_ai_image_from_url
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel # <--- 1. Add this import
