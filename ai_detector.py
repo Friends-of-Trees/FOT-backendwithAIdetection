@@ -112,26 +112,19 @@ def is_ai_image_from_url(image_url: str):
         return cache[image_url]
 
     try:
-        # ✅ Safe image fetch
-        image_bytes = fetch_image_bytes(image_url)
-        if not image_bytes:
-            return None
-
         result = None
 
-        # 🔁 Retry HF API (cold start handling)
         for attempt in range(3):
             response = requests.post(
                 API_URL,
                 headers=HEADERS,
-                data=image_bytes,
+                json={"inputs": image_url},
                 timeout=30
             )
 
             try:
                 result = response.json()
             except Exception:
-                print("HF JSON ERROR")
                 result = None
 
             print("HF RESPONSE:", result)
@@ -146,7 +139,6 @@ def is_ai_image_from_url(image_url: str):
         if not result or isinstance(result, dict):
             return None
 
-        # ✅ Flexible label parsing
         scores = {
             str(item["label"]).lower(): float(item["score"])
             for item in result
@@ -164,21 +156,12 @@ def is_ai_image_from_url(image_url: str):
             scores.get("real", 0)
         ])
 
-        score_diff = ai_score - human_score
-
-        if ai_score >= 0.35 and score_diff > 0.05:
-            is_ai = True
-        elif human_score >= 0.35 and score_diff < -0.05:
-            is_ai = False
-        else:
-            is_ai = ai_score > human_score and ai_score >= 0.2
-
+        is_ai = ai_score > human_score
         cache[image_url] = is_ai
-        print("FINAL AI RESULT:", is_ai)
 
+        print("FINAL AI RESULT:", is_ai)
         return is_ai
 
     except Exception as e:
-        print("ERROR while processing image:", image_url)
-        print("ERROR DETAILS:", str(e))
+        print("ERROR:", str(e))
         return None
