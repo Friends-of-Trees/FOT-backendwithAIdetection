@@ -127,10 +127,12 @@ def is_ai_image_from_url(image_url: str):
             try:
                 result = response.json()
             except Exception:
+                print("HF JSON ERROR")
                 result = None
 
-            print("HF RESPONSE:", result)
+            print("HF RESPONSE RAW:", result)
 
+            # Handle model loading / API errors
             if isinstance(result, dict) and "error" in result:
                 print("Model loading... retrying")
                 time.sleep(3)
@@ -141,28 +143,39 @@ def is_ai_image_from_url(image_url: str):
         if not result or isinstance(result, dict):
             return None
 
+        # ✅ Parse labels safely
         scores = {
             str(item["label"]).lower(): float(item["score"])
             for item in result
         }
 
-        ai_score = max([
-            scores.get("ai", 0),
-            scores.get("fake", 0),
-            scores.get("generated", 0),
-            scores.get("artificial", 0)
-        ])
+        print("PARSED SCORES:", scores)
 
-        human_score = max([
-            scores.get("human", 0),
-            scores.get("real", 0)
-        ])
+        # ✅ Define label groups
+        ai_labels = ["ai", "fake", "generated", "artificial"]
+        human_labels = ["human", "real"]
 
-        is_ai = ai_score > human_score
+        ai_score = max([scores.get(label, 0) for label in ai_labels])
+        human_score = max([scores.get(label, 0) for label in human_labels])
+
+        # ✅ STRONG decision rule (fixes always-AI issue)
+        if ai_score >= 0.6:
+            is_ai = True
+        elif human_score >= 0.6:
+            is_ai = False
+        else:
+            is_ai = None  # uncertain
+
         cache[image_url] = is_ai
 
         print("FINAL AI RESULT:", is_ai)
+
         return is_ai
+
+    except Exception as e:
+        print("ERROR while processing image:", image_url)
+        print("ERROR DETAILS:", str(e))
+        return None
 
     except Exception as e:
         print("ERROR:", str(e))
