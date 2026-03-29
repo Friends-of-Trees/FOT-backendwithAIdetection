@@ -209,15 +209,13 @@ async def detect_ai_batch(data: dict):
             is_ai = is_ai_image_from_url(url)
             print("Batch result:", is_ai)
 
-            results.append({
-                "image_url": url,
-                "is_ai": is_ai
-            })
         except Exception as e:
             print("Batch error:", str(e))
-            results.append({
-                "image_url": url,
-                "is_ai": None
-            })
+            is_ai = None  # ✅ NEVER crash
+
+        results.append({
+            "image_url": url,
+            "is_ai": is_ai
+        })
 
     return {"results": results}
