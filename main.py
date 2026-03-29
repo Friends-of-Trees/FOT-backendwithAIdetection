@@ -95,41 +95,34 @@ async def submit_entry(
     description: str = Form(None),
     photos: list[UploadFile] = File(...)
 ):
-    # 1️⃣ Insert participant entry
-    entry = (
-        supabase
-        .table("competition_entries")  # matches Supabase table name with underscore
-        .insert(
-            {
-                "competition_type": competition_type,
-                "full_name": full_name,
-                "organization": organization,
-                "address": address,
-                "city": city,
-                "contact": contact,
-                "email": email,
-                "description": description,
-            }
-        )
-        .execute()
-    )
+    # 1️⃣ Insert entry
+    entry = supabase.table("competition_entries").insert({
+        "competition_type": competition_type,
+        "full_name": full_name,
+        "organization": organization,
+        "address": address,
+        "city": city,
+        "contact": contact,
+        "email": email,
+        "description": description,
+    }).execute()
 
     entry_id = entry.data[0]["id"]
 
-    # 2️⃣ Upload images
+    # 2️⃣ Upload images + collect URLs
+    image_urls = []
+
     for photo in photos:
-        # Skip empty uploads
         if not photo.filename:
             continue
 
-        # Validate and normalize MIME type (only allow JPEG/PNG)
         guessed_type, _ = mimetypes.guess_type(photo.filename)
         mime_type = guessed_type or photo.content_type or "application/octet-stream"
 
         if mime_type not in {"image/jpeg", "image/png"}:
             raise HTTPException(
                 status_code=400,
-                detail=f"Unsupported image type for file '{photo.filename}'. Please upload JPG or PNG images only.",
+                detail=f"Unsupported image type for file '{photo.filename}'"
             )
 
         file_bytes = await photo.read()
@@ -143,17 +136,36 @@ async def submit_entry(
             {"content-type": mime_type},
         )
 
-        # For supabase-py, get_public_url returns a string URL directly
-        public_url = (
-            supabase.storage.from_("competition-uploads").get_public_url(file_path)
-        )
+        public_url = supabase.storage.from_("competition-uploads").get_public_url(file_path)
 
-        supabase.table("entry_images").insert(
-            {
-                "entry_id": entry_id,
-                "image_url": public_url,
-            }
-        ).execute()
+        supabase.table("entry_images").insert({
+            "entry_id": entry_id,
+            "image_url": public_url,
+        }).execute()
+
+        image_urls.append(public_url)
+
+    # 🔥 3️⃣ AI DETECTION (THIS WAS MISSING)
+    ai_flag = None
+
+    for url in image_urls:
+        print("Checking AI for:", url)
+
+        result = is_ai_image_from_url(url)
+        print("AI RESULT:", result)
+
+        if result is True:
+            ai_flag = True
+            break
+        elif result is False and ai_flag is None:
+            ai_flag = False
+
+    print("FINAL AI FLAG:", ai_flag)
+
+    # 🔥 ALWAYS update DB
+    supabase.table("competition_entries").update({
+        "is_ai_generated": ai_flag
+    }).eq("id", entry_id).execute()
 
     return {"status": "success", "entry_id": entry_id}
 
