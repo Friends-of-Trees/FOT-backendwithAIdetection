@@ -11,6 +11,18 @@ load_dotenv()
 
 app = FastAPI()
 
+import time
+
+def safe_supabase_call(func):
+    for attempt in range(3):
+        try:
+            return func()
+        except Exception as e:
+            print(f"Supabase error (attempt {attempt+1}):", str(e))
+            time.sleep(2)
+    return None
+
+
 # -------------------------------------------------
 # CORS
 # -------------------------------------------------
@@ -96,8 +108,10 @@ async def submit_entry(
     description: str = Form(None),
     photos: list[UploadFile] = File(...)
 ):
-    # 1️⃣ Insert entry
-    entry = supabase.table("competition_entries").insert({
+    print("SUBMIT ENTRY CALLED")
+
+    # ✅ SAFE INSERT
+    entry = safe_supabase_call(lambda: supabase.table("competition_entries").insert({
         "competition_type": competition_type,
         "full_name": full_name,
         "organization": organization,
@@ -106,13 +120,16 @@ async def submit_entry(
         "contact": contact,
         "email": email,
         "description": description,
-    }).execute()
+    }).execute())
+
+    if not entry or not entry.data:
+        raise HTTPException(status_code=500, detail="Database insert failed")
 
     entry_id = entry.data[0]["id"]
 
-    # 2️⃣ Upload images + collect URLs
     image_urls = []
 
+    # ✅ SAFE IMAGE UPLOAD LOOP
     for photo in photos:
         if not photo.filename:
             continue
@@ -127,69 +144,90 @@ async def submit_entry(
             )
 
         file_bytes = await photo.read()
-
         filename = f"{uuid.uuid4()}_{photo.filename}"
         file_path = f"{competition_type}/{entry_id}/{filename}"
 
-        supabase.storage.from_("competition-uploads").upload(
-            file_path,
-            file_bytes,
-            {"content-type": mime_type},
-        )
+        try:
+            supabase.storage.from_("competition-uploads").upload(
+                file_path,
+                file_bytes,
+                {"content-type": mime_type},
+            )
+        except Exception as e:
+            print("UPLOAD ERROR:", str(e))
+            continue
 
         public_url = supabase.storage.from_("competition-uploads").get_public_url(file_path)
 
-        supabase.table("entry_images").insert({
+        safe_supabase_call(lambda: supabase.table("entry_images").insert({
             "entry_id": entry_id,
             "image_url": public_url,
-        }).execute()
+        }).execute())
 
         image_urls.append(public_url)
 
-    # 🔥 3️⃣ AI DETECTION (THIS WAS MISSING)
+    # ✅ SAFE AI DETECTION
     ai_flag = None
 
     for url in image_urls:
         print("Checking AI for:", url)
 
-        result = is_ai_image_from_url(url)
-        print("AI RESULT:", result)
+        try:
+            result = is_ai_image_from_url(url)
+            print("AI RESULT:", result)
 
-        if result is True:
-            ai_flag = True
-            break
-        elif result is False and ai_flag is None:
-            ai_flag = False
+            if result is True:
+                ai_flag = True
+                break
+            elif result is False and ai_flag is None:
+                ai_flag = False
+
+        except Exception as e:
+            print("AI ERROR:", str(e))
+            continue
 
     print("FINAL AI FLAG:", ai_flag)
 
-    # 🔥 ALWAYS update DB
-    supabase.table("competition_entries").update({
+    # ✅ SAFE UPDATE
+    safe_supabase_call(lambda: supabase.table("competition_entries").update({
         "is_ai_generated": ai_flag
-    }).eq("id", entry_id).execute()
+    }).eq("id", entry_id).execute())
 
     return {"status": "success", "entry_id": entry_id}
 
-# ... keep admin/entries, but update table names there too ...
+
+# -------------------------------------------------
+# ADMIN ENTRIES (SAFE VERSION)
+# -------------------------------------------------
+
 @app.get("/admin/entries")
 def get_entries():
-    entries = (
-        supabase.table("competition_entries")
-        .select("*")
-        .order("created_at", desc=True)
-        .execute()
-        .data
-    )
+    try:
+        response = safe_supabase_call(lambda: supabase.table("competition_entries")
+            .select("*")
+            .order("created_at", desc=True)
+            .execute()
+        )
+
+        entries = response.data if response and response.data else []
+
+    except Exception as e:
+        print("FETCH ENTRIES ERROR:", str(e))
+        return []
 
     for entry in entries:
-        images = (
-            supabase.table("entry_images")
-            .select("image_url")
-            .eq("entry_id", entry["id"])
-            .execute()
-            .data
-        )
-        entry["images"] = images
+        try:
+            images_res = safe_supabase_call(lambda: supabase.table("entry_images")
+                .select("image_url")
+                .eq("entry_id", entry["id"])
+                .execute()
+            )
+
+            entry["images"] = images_res.data if images_res and images_res.data else []
+
+        except Exception as e:
+            print("FETCH IMAGES ERROR:", str(e))
+            entry["images"] = []
 
     return entries
 
