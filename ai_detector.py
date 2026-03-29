@@ -67,11 +67,12 @@
 #         print("ERROR DETAILS:", str(e))
 #         return None
 
-
 from dotenv import load_dotenv
 import os
 import requests
 import time
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 # Load env
 env_path = os.path.join(os.path.dirname(__file__), ".env")
@@ -87,27 +88,52 @@ HEADERS = {
 
 cache = {}
 
+# 🔁 Robust session with retry
+session = requests.Session()
+retries = Retry(total=3, backoff_factor=1)
+session.mount("https://", HTTPAdapter(max_retries=retries))
+
+
+def fetch_image_bytes(url):
+    try:
+        response = session.get(url, timeout=15, stream=True)
+        response.raise_for_status()
+        return response.content
+    except Exception as e:
+        print("IMAGE DOWNLOAD ERROR:", str(e))
+        return None
+
 
 def is_ai_image_from_url(image_url: str):
+    if not image_url:
+        return None
+
     if image_url in cache:
         return cache[image_url]
 
     try:
-        # Download image
-        img_response = requests.get(image_url, timeout=10)
-        img_response.raise_for_status()
+        # ✅ Safe image fetch
+        image_bytes = fetch_image_bytes(image_url)
+        if not image_bytes:
+            return None
 
-        # 🔁 Retry logic for HF cold start
         result = None
+
+        # 🔁 Retry HF API (cold start handling)
         for attempt in range(3):
             response = requests.post(
                 API_URL,
                 headers=HEADERS,
-                data=img_response.content,
+                data=image_bytes,
                 timeout=30
             )
 
-            result = response.json()
+            try:
+                result = response.json()
+            except Exception:
+                print("HF JSON ERROR")
+                result = None
+
             print("HF RESPONSE:", result)
 
             if isinstance(result, dict) and "error" in result:
@@ -117,11 +143,10 @@ def is_ai_image_from_url(image_url: str):
 
             break
 
-        # Still error
-        if isinstance(result, dict) and "error" in result:
+        if not result or isinstance(result, dict):
             return None
 
-        # ✅ Robust label parsing
+        # ✅ Flexible label parsing
         scores = {
             str(item["label"]).lower(): float(item["score"])
             for item in result
