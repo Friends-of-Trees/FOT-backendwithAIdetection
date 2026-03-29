@@ -71,8 +71,9 @@
 from dotenv import load_dotenv
 import os
 import requests
+import time
 
-# Load .env
+# Load env
 env_path = os.path.join(os.path.dirname(__file__), ".env")
 load_dotenv(env_path)
 
@@ -87,39 +88,56 @@ HEADERS = {
 cache = {}
 
 
-def is_ai_image_from_url(image_url: str) -> bool:
+def is_ai_image_from_url(image_url: str):
     if image_url in cache:
         return cache[image_url]
 
     try:
-        # Step 1: Download image
+        # Download image
         img_response = requests.get(image_url, timeout=10)
         img_response.raise_for_status()
 
-        # Step 2: Send to HuggingFace API
-        response = requests.post(
-            API_URL,
-            headers=HEADERS,
-            data=img_response.content,
-            timeout=30
-        )
+        # 🔁 Retry logic for HF cold start
+        result = None
+        for attempt in range(3):
+            response = requests.post(
+                API_URL,
+                headers=HEADERS,
+                data=img_response.content,
+                timeout=30
+            )
 
-        result = response.json()
-        print("HF API RESPONSE:", result)
+            result = response.json()
+            print("HF RESPONSE:", result)
 
-        # Step 3: Handle model loading delay (cold start)
+            if isinstance(result, dict) and "error" in result:
+                print("Model loading... retrying")
+                time.sleep(3)
+                continue
+
+            break
+
+        # Still error
         if isinstance(result, dict) and "error" in result:
-            print("Model loading or API error:", result)
             return None
 
-        # Step 4: Parse output (same logic as before)
+        # ✅ Robust label parsing
         scores = {
             str(item["label"]).lower(): float(item["score"])
             for item in result
         }
 
-        ai_score = scores.get("ai", scores.get("artificial", 0.0))
-        human_score = scores.get("hum", scores.get("human", 0.0))
+        ai_score = max([
+            scores.get("ai", 0),
+            scores.get("fake", 0),
+            scores.get("generated", 0),
+            scores.get("artificial", 0)
+        ])
+
+        human_score = max([
+            scores.get("human", 0),
+            scores.get("real", 0)
+        ])
 
         score_diff = ai_score - human_score
 
@@ -131,6 +149,8 @@ def is_ai_image_from_url(image_url: str) -> bool:
             is_ai = ai_score > human_score and ai_score >= 0.2
 
         cache[image_url] = is_ai
+        print("FINAL AI RESULT:", is_ai)
+
         return is_ai
 
     except Exception as e:
