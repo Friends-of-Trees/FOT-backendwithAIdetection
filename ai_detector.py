@@ -81,9 +81,11 @@ load_dotenv(env_path)
 HF_TOKEN = os.getenv("HF_TOKEN")
 AI_MODEL = os.getenv("AI_DETECTOR_MODEL", "Ateeqq/ai-vs-human-image-detector")
 
-API_URL = f"https://api-inference.huggingface.co/models/{AI_MODEL}"
+API_URL = f"https://router.huggingface.co/hf-inference/models/{AI_MODEL}"
+
 HEADERS = {
-    "Authorization": f"Bearer {HF_TOKEN}"
+    "Authorization": f"Bearer {HF_TOKEN}",
+    "Content-Type": "application/json"
 }
 
 cache = {}
