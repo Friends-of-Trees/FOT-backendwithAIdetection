@@ -191,3 +191,32 @@ def get_entries():
         entry["images"] = images
 
     return entries
+
+@app.post("/detect-ai-batch")
+async def detect_ai_batch(data: dict):
+    image_urls = data.get("image_urls")
+
+    if not image_urls or not isinstance(image_urls, list):
+        return {"error": "image_urls must be a list"}
+
+    results = []
+
+    for url in image_urls:
+        print("Batch checking:", url)
+
+        try:
+            is_ai = is_ai_image_from_url(url)
+            print("Batch result:", is_ai)
+
+            results.append({
+                "image_url": url,
+                "is_ai": is_ai
+            })
+        except Exception as e:
+            print("Batch error:", str(e))
+            results.append({
+                "image_url": url,
+                "is_ai": None
+            })
+
+    return {"results": results}
